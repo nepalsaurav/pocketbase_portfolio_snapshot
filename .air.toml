@@ -1,0 +1,8 @@
+#:schema https://raw.githubusercontent.com/air-verse/air/master/air_example.toml
+[build]
+  cmd = "go build -o ./dev_bin ."
+  full_bin = "./dev_bin serve"
+  
+  exclude_dir = ["pb_data", "tmp", "node_modules", "frontend"]
+  exclude_file = ["dev_bin"] 
+  include_ext = ["go", "tpl", "tmpl", "html"]
