@@ -48,22 +48,26 @@ type TransactionsModel struct {
 }
 
 type HoldingLot struct {
-	Symbol      string  `json:"symbol"`
-	Qty         float64 `json:"qty"`
-	TotalCost   float64 `json:"total_cost"`
-	WACC        float64 `json:"average_cost"`
-	HoldingType string  `json:"holding_type"`
+	Symbol        string  `json:"symbol"`
+	Qty           float64 `json:"qty"`
+	TotalCost     float64 `json:"total_cost"`
+	WACC          float64 `json:"average_cost"`
+	HoldingType   string  `json:"holding_type"`
+	IsProvisional bool    `json:"is_provisional"`
+	Date          string  `json:"date"`
 }
 
 type Ledger struct {
-	ID         string       `json:"collection_id"`
-	Date       string       `json:"date"`
-	ClientName string       `json:"client_name"`
-	TrnType    string       `json:"trn_type"`
-	Symbol     string       `json:"symbol"`
-	Qty        float64      `json:"qty"`
-	Rate       float64      `json:"rate"`
-	Holding    []HoldingLot `json:"holding"`
+	ID            string  `json:"collection_id"`
+	Date          string  `json:"date"`
+	ClientName    string  `json:"client_name"`
+	TrnType       string  `json:"trn_type"`
+	Symbol        string  `json:"symbol"`
+	Qty           float64 `json:"qty"`
+	Rate          float64 `json:"rate"`
+	IsProvisional bool    `json:"is_provisional"`
+	CapitalGain   float64 `json:"capital_gain"`
+	CGT           float64 `json:"cgts"`
 }
 
 // CombineDate represents the shared columns from the UNION SQL
