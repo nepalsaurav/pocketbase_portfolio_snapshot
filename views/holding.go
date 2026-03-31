@@ -1,92 +1,120 @@
 package views
 
 import (
+	_ "embed" // Required for go:embed
+	"encoding/json"
 	"net/http"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/types"
 )
 
-type DailyTransactionRecord struct {
-	Id               string         `db:"id" json:"id"`
-	TrnNo            string         `db:"trn_no" json:"trn_no"`
-	ClientName       string         `db:"client_name" json:"client_name"`
-	Symbol           string         `db:"symbol" json:"symbol"`
-	TrnType          string         `db:"trn_type" json:"trn_type"`
-	Date             types.DateTime `db:"date" json:"date"`
-	Qty              int            `db:"qty" json:"qty"`
-	Rate             float64        `db:"rate" json:"rate"`
-	Amount           float64        `db:"amount" json:"amount"`
-	BrokerCommission float64        `db:"broker_commission" json:"broker_commission"`
-	NepseCommission  float64        `db:"nepse_commission" json:"nepse_commission"`
-	SeboCommission   float64        `db:"sebo_commission" json:"sebo_commission"`
-	DpCharge         float64        `db:"dp_charge" json:"dp_charge"`
-}
+//go:embed query/combine_data.sql
+var combineDateSQL string
 
-type CorporateActionBonus struct {
-	Symbol        string         `db:"symbol" json:"symbol"`
-	BookCloseDate types.DateTime `db:"book_close_date" json:"book_close_date"`
-	BonusPct      float64        `db:"bonus_pct" json:"bonus_pct"`
-	ListingDate   types.DateTime `db:"listing_date" json:"listing_date"`
-}
+// jsonError standardizes error responses and handles standard Go errors correctly
+func jsonError(e *core.RequestEvent, msg any) error {
+	// Extract the error string if the message is a standard Go error
+	if err, ok := msg.(error); ok {
+		msg = err.Error()
+	}
 
-type StockHolding struct {
-	Symbol         string  `json:"symbol"`
-	TotalQty       int     `json:"total_qty"`
-	TotalCost      float64 `json:"total_cost"`
-	AverageBuyRate float64 `json:"average_buy_rate"`
-}
-
-type DayWiseHoldings struct {
-	Date     types.DateTime           `json:"date"`
-	Holdings map[string]*StockHolding `json:"holdings"`
+	return e.JSON(http.StatusBadRequest, map[string]any{
+		"status":  "failed",
+		"message": msg,
+	})
 }
 
 func CurrentHolding(e *core.RequestEvent) error {
-
-	transactions := []DailyTransactionRecord{}
-
-	err := e.App.DB().
-		Select("*").
-		From("daily_transactions").
-		OrderBy("trn_no ASC").
-		All(&transactions)
-
-	if err != nil {
-		return e.JSON(http.StatusOK, map[string]any{
-			"status": "failed",
-			"err":    err,
-		})
+	clientName := e.Request.URL.Query().Get("client_name")
+	if clientName == "" {
+		return jsonError(e, "client_name query parameter is required")
 	}
 
-	holdings := make(map[string]*StockHolding)
-	var dayWiseHoldings []DayWiseHoldings
-	for _, t := range transactions {
-		// if symbol not exist then create in map
-		if _, exists := holdings[t.Symbol]; !exists {
-			holdings[t.Symbol] = &StockHolding{Symbol: t.Symbol}
-		}
-		// get holding for that stocks
-		h := holdings[t.Symbol]
+	var events []CombineDate
+	if err := e.App.DB().NewQuery(combineDateSQL).Bind(dbx.Params{"client_name": clientName}).All(&events); err != nil {
+		return jsonError(e, err) // Will now properly output the DB error text if one occurs
+	}
 
-		switch t.TrnType {
-		case "buy":
-			buyCost := (float64(t.Qty) * t.Rate) + t.BrokerCommission + t.NepseCommission + t.SeboCommission + t.DpCharge
-			h.TotalQty += t.Qty
-			h.TotalCost += buyCost
-			if h.TotalQty > 0 {
-				h.AverageBuyRate = h.TotalCost / float64(h.TotalQty)
+	var ledger []Ledger
+	holdingsMap := make(map[string]*Holding)
+
+	for _, ev := range events {
+		h, exists := holdingsMap[ev.Symbol]
+		if !exists {
+			h = &Holding{Symbol: ev.Symbol}
+			holdingsMap[ev.Symbol] = h
+		}
+
+		switch ev.Source {
+		case "Transaction":
+			var meta TransactionMeta
+			if err := json.Unmarshal([]byte(ev.Metadata), &meta); err != nil {
+				continue
 			}
-		case "sell":
-			h.TotalQty -= t.Qty
+
+			switch meta.TrnType {
+			case "buy":
+				h.RunningQty += meta.Qty
+				h.TotalCost += (meta.Qty * meta.Rate) + meta.BrokerCommission + meta.SeboCommission + meta.NepseCommission + meta.DpCharge
+				h.AverageCost = h.TotalCost / h.RunningQty
+			case "sell":
+				h.RunningQty -= meta.Qty
+			}
+
+			ledger = append(ledger, Ledger{
+				Date:    ev.EventDate,
+				TrnType: meta.TrnType,
+				Qty:     meta.Qty,
+				Rate:    meta.Rate,
+				Holding: *h,
+			})
+
+		case "Bonus":
+			var meta BonusMeta
+			if err := json.Unmarshal([]byte(ev.Metadata), &meta); err != nil {
+				continue
+			}
+
+			bonusQty := h.RunningQty * (meta.BonusPct / 100)
+			if bonusQty <= 0 {
+				continue
+			}
+
+			h.RunningQty += bonusQty
+			h.TotalCost += bonusQty * 100
+			h.AverageCost = h.TotalCost / h.RunningQty
+
+			if meta.ListingDate == "" {
+				h.ProvisionalBonus += bonusQty
+			}
+
+			ledger = append(ledger, Ledger{
+				Date:    ev.EventDate,
+				TrnType: "Bonus",
+				Qty:     bonusQty,
+				Rate:    100,
+				Holding: *h,
+			})
+
+		case "Right Share":
+			var meta RightShareMeta
+			if err := json.Unmarshal([]byte(ev.Metadata), &meta); err != nil {
+				continue
+			}
+			// Parse logic for meta.RightShareRatio goes here
+
+		case "Dividend":
+			var meta DividendMeta
+			if err := json.Unmarshal([]byte(ev.Metadata), &meta); err != nil {
+				continue
+			}
+			// Cash dividend logic using meta.CashDividendPct goes here
 		}
-
-		dayWiseHoldings = append(dayWiseHoldings, DayWiseHoldings{Date: t.Date, Holdings: holdings})
-
 	}
 
 	return e.JSON(http.StatusOK, map[string]any{
-		"status":   "success",
-		"holdings": dayWiseHoldings,
+		"status": "success",
+		"ledger": ledger,
 	})
 }

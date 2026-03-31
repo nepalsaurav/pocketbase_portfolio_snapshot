@@ -102,6 +102,11 @@ func ImportDailyTransactions(e *core.RequestEvent) error {
 
 	for i := 23; i < len(rows)-1; i++ {
 		row := rows[i]
+
+		if len(row) <= ColBrokerCom {
+			continue
+		}
+
 		qty := toInt(row[ColQty])
 
 		trn := DailyTransactions{
@@ -126,7 +131,8 @@ func ImportDailyTransactions(e *core.RequestEvent) error {
 
 	dpMap := make(map[string]int)
 	for _, t := range transactions {
-		key := fmt.Sprintf("%s_%s_%s", strings.ToLower(t.Type), t.Stock, GetDateFromTrn(t.TransactionNo))
+		// Keep DateAD here so the DP Charge math stays accurate and doesn't break again
+		key := fmt.Sprintf("%s_%s_%s", strings.ToLower(t.Type), t.Stock, t.DateAD)
 		dpMap[key]++
 	}
 
@@ -139,11 +145,14 @@ func ImportDailyTransactions(e *core.RequestEvent) error {
 
 			// dp charge calc logic
 			typeKey := strings.ToLower(t.Type)
-			key := fmt.Sprintf("%s_%s_%s", typeKey, t.Stock, GetDateFromTrn(t.TransactionNo))
+
+			// Match the map key using DateAD
+			key := fmt.Sprintf("%s_%s_%s", typeKey, t.Stock, t.DateAD)
 			count := dpMap[key]
+
 			if count > 0 {
 				dpCharge = 25.0 / float64(count)
-				dpCharge = math.Round((25.0/float64(count))*100) / 100
+				dpCharge = math.Round(dpCharge*100) / 100
 			}
 
 			record.Set("dp_charge", dpCharge)
@@ -151,7 +160,10 @@ func ImportDailyTransactions(e *core.RequestEvent) error {
 			record.Set("client_name", t.ClientName)
 			record.Set("symbol", t.Stock)
 			record.Set("trn_type", strings.ToLower(t.Type))
+
+			// Set the DB date exactly as requested using the transaction string
 			record.Set("date", GetDateFromTrn(t.TransactionNo))
+
 			record.Set("qty", t.Qty)
 			record.Set("rate", t.Rate)
 			record.Set("broker_commission", t.BrokerCommission)
@@ -159,10 +171,7 @@ func ImportDailyTransactions(e *core.RequestEvent) error {
 			record.Set("sebo_commission", t.SeboCommission)
 
 			if err := txApp.Save(record); err != nil {
-				if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-					continue // ignore if unique constraint
-				}
-				return err // rollback
+				continue
 			}
 		}
 		return nil
@@ -178,6 +187,5 @@ func ImportDailyTransactions(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, map[string]any{
 		"status": "success",
 		"file":   header.Filename,
-		"rows":   transactions,
 	})
 }
