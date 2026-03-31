@@ -47,20 +47,23 @@ type TransactionsModel struct {
 	Updated          string  `json:"updated"`
 }
 
-type Holding struct {
-	Symbol           string  `json:"symbol"`
-	RunningQty       float64 `json:"running_qty"`
-	TotalCost        float64 `json:"total_cost"`
-	AverageCost      float64 `json:"average_cost"`
-	ProvisionalBonus float64 `json:"provisional_bonus"`
+type HoldingLot struct {
+	Symbol      string  `json:"symbol"`
+	Qty         float64 `json:"qty"`
+	TotalCost   float64 `json:"total_cost"`
+	WACC        float64 `json:"average_cost"`
+	HoldingType string  `json:"holding_type"`
 }
 
 type Ledger struct {
-	Date    string  `json:"date"`
-	TrnType string  `json:"trn_type"`
-	Qty     float64 `json:"qty"`
-	Rate    float64 `json:"rate"`
-	Holding Holding `json:"holding"`
+	ID         string       `json:"collection_id"`
+	Date       string       `json:"date"`
+	ClientName string       `json:"client_name"`
+	TrnType    string       `json:"trn_type"`
+	Symbol     string       `json:"symbol"`
+	Qty        float64      `json:"qty"`
+	Rate       float64      `json:"rate"`
+	Holding    []HoldingLot `json:"holding"`
 }
 
 // CombineDate represents the shared columns from the UNION SQL
@@ -101,4 +104,9 @@ type DividendMeta struct {
 type RightShareMeta struct {
 	RightShareRatio string `json:"right_share_ratio"`
 	ListingDate     string `json:"listing_date"`
+}
+
+type Lot struct {
+	Qty  float64
+	Rate float64 // The effective cost per share for this specific batch
 }
